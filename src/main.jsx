@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ShoppingCart, Package, MessageSquare, Settings, Plus, Pencil, Trash2,
@@ -6,6 +6,7 @@ import {
   Phone, Mail, Clock
 } from "lucide-react";
 import "./styles.css";
+import { supabase } from "./supabase";
 
 const PRODUCTS = [
   {
@@ -119,14 +120,93 @@ function App() {
   const saveSettings = (v) => { setSettings(v); write("mocSettingsV2", v); };
   const saveCart = (v) => { setCart(v); write("mocCartV2", v); };
 
-  const enterAdmin = () => {
-    const password = window.prompt("Mật khẩu Admin");
-    if (password === "admin123") {
+  const mapOrder = (row) => ({
+    id: row.id,
+    createdAt: new Date(row.created_at).toLocaleString("vi-VN"),
+    customer: row.customer_name,
+    phone: row.phone,
+    address: row.address,
+    note: row.note || "",
+    items: row.items || [],
+    total: row.total,
+    status: row.status,
+  });
+
+  useEffect(() => {
+    if (!admin) return;
+    let channel;
+    let cancelled = false;
+
+    const loadOrders = async () => {
+      const { data, error } = await supabase
+        .from("orders")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (cancelled) return;
+      if (error) {
+        window.alert("Không tải được đơn hàng: " + error.message);
+        return;
+      }
+      setOrders((data || []).map(mapOrder));
+    };
+
+    loadOrders();
+    channel = supabase
+      .channel("moc-may-orders")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "orders" }, (payload) => {
+        const incoming = mapOrder(payload.new);
+        setOrders((current) => [incoming, ...current.filter((x) => x.id !== incoming.id)]);
+        try {
+          const audio = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=");
+          audio.play().catch(() => {});
+        } catch {}
+        if (document.visibilityState !== "visible") {
+          try {
+            if ("Notification" in window && Notification.permission === "granted") {
+              new Notification("Mộc Mây – Có đơn mới", { body: `${incoming.customer} · ${money(incoming.total)}` });
+            }
+          } catch {}
+        }
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "orders" }, (payload) => {
+        const incoming = mapOrder(payload.new);
+        setOrders((current) => current.map((x) => x.id === incoming.id ? incoming : x));
+      })
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [admin]);
+
+  const updateOrderStatus = async (id, status) => {
+    const { error } = await supabase.from("orders").update({ status }).eq("id", id);
+    if (error) {
+      window.alert("Không cập nhật được đơn: " + error.message);
+      return;
+    }
+    setOrders((current) => current.map((x) => x.id === id ? { ...x, status } : x));
+  };
+
+  const enterAdmin = async () => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData?.session) {
       setAdmin(true);
       setPage("dashboard");
-    } else if (password !== null) {
-      window.alert("Sai mật khẩu");
+      return;
     }
+    const email = window.prompt("Email Admin");
+    if (!email) return;
+    const password = window.prompt("Mật khẩu Admin");
+    if (!password) return;
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      window.alert("Đăng nhập Admin thất bại: " + error.message);
+      return;
+    }
+    setAdmin(true);
+    setPage("dashboard");
   };
 
   const addToCart = (product) => {
@@ -147,24 +227,26 @@ function App() {
 
   const subtotal = cart.reduce((sum, x) => sum + x.price * x.quantity, 0);
 
-  const placeOrder = (info) => {
+  const placeOrder = async (info) => {
     if (!cart.length) return;
-    const order = {
-      id: Date.now(),
-      createdAt: new Date().toLocaleString("vi-VN"),
-      customer: info.name,
-      phone: info.phone,
-      address: info.address,
-      note: info.note,
+    const payload = {
+      customer_name: info.name.trim(),
+      phone: info.phone.trim(),
+      address: info.address.trim(),
+      note: info.note?.trim() || "",
       items: cart.map((x) => ({ id: x.id, name: x.name, price: x.price, quantity: x.quantity })),
       total: subtotal,
       status: "Mới",
     };
-    saveOrders([order, ...orders]);
+    const { error } = await supabase.from("orders").insert(payload);
+    if (error) {
+      window.alert("Chưa gửi được đơn hàng: " + error.message);
+      return;
+    }
     saveCart([]);
     setCheckout(false);
     setCartOpen(false);
-    window.alert("Đặt hàng thành công!");
+    window.alert("Đặt hàng thành công! Mộc Mây đã nhận đơn của bạn.");
   };
 
   const saveProduct = (product) => {
@@ -195,7 +277,7 @@ function App() {
         deleteProduct={deleteProduct}
         saveProduct={saveProduct}
         saveReviews={saveReviews}
-        saveOrders={saveOrders}
+        updateOrderStatus={updateOrderStatus}
         saveSettings={saveSettings}
         edit={edit}
       />
@@ -503,7 +585,7 @@ function CheckoutModal({ total, close, place }) {
 }
 
 function Admin(props) {
-  const { page, setPage, setAdmin, products, reviews, orders, settings, setEdit, deleteProduct, saveProduct, saveReviews, saveOrders, saveSettings, edit } = props;
+  const { page, setPage, setAdmin, products, reviews, orders, settings, setEdit, deleteProduct, saveProduct, saveReviews, updateOrderStatus, saveSettings, edit } = props;
 
   return (
     <div className="admin">
@@ -518,7 +600,7 @@ function Admin(props) {
         ].map(([id, label, Icon]) => (
           <button key={id} className={page === id ? "active" : ""} onClick={() => setPage(id)}><Icon size={17} />{label}</button>
         ))}
-        <button onClick={() => setAdmin(false)}><LogOut size={17} />Về cửa hàng</button>
+        <button onClick={async () => { await supabase.auth.signOut(); setAdmin(false); setPage("home"); }}><LogOut size={17} />Đăng xuất</button>
       </aside>
 
       <main>
@@ -529,6 +611,11 @@ function Admin(props) {
             <div>Đơn hàng<b>{orders.length}</b></div>
             <div>Đánh giá<b>{reviews.length}</b></div>
           </div>
+          <button className="outlineBtn" onClick={async () => {
+            if (!("Notification" in window)) return alert("Trình duyệt này không hỗ trợ thông báo.");
+            const permission = await Notification.requestPermission();
+            alert(permission === "granted" ? "Đã bật thông báo đơn mới." : "Bạn chưa cho phép thông báo.");
+          }}>🔔 Bật thông báo đơn mới</button>
         </>}
 
         {page === "products" && <>
@@ -542,7 +629,7 @@ function Admin(props) {
           </table>
         </>}
 
-        {page === "orders" && <Orders orders={orders} setOrders={saveOrders} />}
+        {page === "orders" && <Orders orders={orders} updateOrderStatus={updateOrderStatus} />}
         {page === "reviews" && <ReviewsAdmin reviews={reviews} setReviews={saveReviews} />}
         {page === "settings" && <SettingsPage settings={settings} setSettings={saveSettings} />}
       </main>
@@ -552,7 +639,7 @@ function Admin(props) {
   );
 }
 
-function Orders({ orders, setOrders }) {
+function Orders({ orders, updateOrderStatus }) {
   const total = orders.reduce((s, o) => s + o.total, 0);
   return <>
     <div className="title"><h1>📦 Đơn hàng</h1><b>Tổng: {money(total)}</b></div>
@@ -562,7 +649,7 @@ function Orders({ orders, setOrders }) {
           {o.items?.map((i) => <div key={i.id}>{i.name} × {i.quantity}</div>)}
         </div>
         <div><b>{money(o.total)}</b>
-          <select value={o.status} onChange={(e) => setOrders(orders.map(x => x.id === o.id ? { ...x, status: e.target.value } : x))}>
+          <select value={o.status} onChange={(e) => updateOrderStatus(o.id, e.target.value)}>
             <option>Mới</option><option>Đang chuẩn bị</option><option>Đang giao</option><option>Hoàn thành</option><option>Đã hủy</option>
           </select>
         </div>
