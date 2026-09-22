@@ -1,7 +1,25 @@
-# Mộc Mây Store — V3 + V4
+# Mộc Mây Store — Lovable style
 
-Giữ giao diện V3 và bổ sung chức năng V4: giỏ hàng, đặt hàng, quản lý đơn hàng/trạng thái, thêm/sửa/xóa sản phẩm, đổi giá/danh mục/rating/ảnh, tìm kiếm/lọc, quản lý đánh giá, đổi thương hiệu/màu nền và responsive mobile.
+## Chạy trên Windows
+npm install
+npm run dev
 
-Admin password demo: `admin123`
+## Build GitHub Pages
+npm run build
 
-Run: `npm install` rồi `npm run dev`
+GitHub Pages repository path:
+https://dangthanh123tv-cmd.github.io/moc-may-store/
+
+## Admin
+Mật khẩu demo: admin123
+
+Admin có:
+- Thêm / sửa / xóa sản phẩm
+- Sửa giá, danh mục, rating, mô tả, URL ảnh
+- Xem và cập nhật trạng thái đơn hàng
+- Xóa đánh giá
+- Khách hàng tự gửi đánh giá
+- Sửa tên thương hiệu, Gmail, số điện thoại, địa chỉ, giờ mở cửa
+- Chỉnh màu nền và màu xanh chủ đạo
+
+Lưu ý: dữ liệu admin dùng localStorage nên chỉ đồng bộ trên cùng một trình duyệt/thiết bị.
