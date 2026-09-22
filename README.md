@@ -1,32 +1,57 @@
-# Mộc Mây Store — Lovable style
+# Mộc Mây Store - bản hoàn chỉnh
 
-## Chạy trên Windows
-npm install
-npm run dev
+## Đã có
+- Website Mộc Mây responsive.
+- Sản phẩm, tìm kiếm, lọc, chi tiết.
+- Giỏ hàng và đặt hàng.
+- Đơn hàng lưu Supabase.
+- Admin xem đơn hàng realtime.
+- Admin thấy tên, SĐT, địa chỉ, ghi chú.
+- Admin thấy **số lượng, đơn giá và thành tiền từng sản phẩm**.
+- Cập nhật trạng thái: Mới / Đã nhận / Đang pha / Đang giao / Hoàn thành.
+- Admin thêm/sửa/xóa sản phẩm.
+- Admin quản lý đánh giá.
+- Admin sửa thông tin cửa hàng và giao diện.
+- Đăng nhập Supabase.
+- Quên mật khẩu / đặt mật khẩu mới.
 
-## Build GitHub Pages
-npm run build
+## Supabase
+URL:
+https://deknuzxystcfvbyyboah.supabase.co
 
-GitHub Pages repository path:
+Admin:
+Email Admin được nhập khi đăng nhập; không hiển thị sẵn trên giao diện.
+
+Site URL:
 https://dangthanh123tv-cmd.github.io/moc-may-store/
 
-## Admin
-Mật khẩu demo: admin123
-
-Admin có:
-- Thêm / sửa / xóa sản phẩm
-- Sửa giá, danh mục, rating, mô tả, URL ảnh
-- Xem và cập nhật trạng thái đơn hàng
-- Xóa đánh giá
-- Khách hàng tự gửi đánh giá
-- Sửa tên thương hiệu, Gmail, số điện thoại, địa chỉ, giờ mở cửa
-- Chỉnh màu nền và màu xanh chủ đạo
-
-Lưu ý: dữ liệu admin dùng localStorage nên chỉ đồng bộ trên cùng một trình duyệt/thiết bị.
+Redirect URL:
+https://dangthanh123tv-cmd.github.io/moc-may-store/**
 
 
-## Supabase – đơn hàng realtime
+## Phân quyền Admin không chứa Gmail trong mã nguồn
 
-Project này đã tích hợp Supabase Realtime cho bảng `orders`. Khách có thể tạo đơn mà không cần đăng nhập; Admin đăng nhập bằng Supabase Auth để xem/cập nhật đơn. Publishable key được phép dùng trong trình duyệt; không đưa secret/service_role key vào frontend.
+Bản V5 không lưu email Admin trong `main.jsx`.
 
-Trước khi deploy, hãy tạo một tài khoản Admin trong Supabase Authentication > Users và dùng email/mật khẩu đó ở nút Admin.
+Tài khoản Admin được xác định bằng `app_metadata.role = "admin"` của Supabase Auth.
+
+Chạy SQL này trong Supabase SQL Editor để cấp quyền Admin cho user hiện tại:
+
+```sql
+update auth.users
+set raw_app_meta_data =
+  jsonb_set(
+    coalesce(raw_app_meta_data, '{}'::jsonb),
+    '{role}',
+    '"admin"',
+    true
+  )
+where id = 'USER_UUID_CUA_BAN';
+```
+
+Lấy `USER_UUID_CUA_BAN` trong Supabase > Authentication > Users.
+
+Sau khi chạy SQL, đăng xuất/đăng nhập lại Admin để nhận token mới.
+
+
+V6: đánh giá realtime, hiển thị tức thì, bố cục background và tối ưu mobile. Chạy `supabase_reviews.sql` trong Supabase SQL Editor trước khi dùng đánh giá realtime.
