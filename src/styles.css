@@ -188,3 +188,12 @@ footer p{line-height:1.6;max-width:500px;color:#dce3dc}
   .adminProductCard{grid-template-columns:1fr}
   .twoCols{grid-template-columns:1fr}
 }
+
+/* Admin email is not prefilled or displayed on the login screen. */
+
+/* V6 layout backgrounds */
+.site.layout-editorial .hero{background:linear-gradient(135deg,rgba(230,234,220,.65),rgba(247,243,233,.2));border-radius:0 0 32px 32px}
+.site.layout-editorial .productCard,.site.layout-editorial .reviewCard{box-shadow:0 12px 35px rgba(48,70,50,.08)}
+.site.layout-minimal .creamBand{background:#f1eee5}
+.site.layout-minimal .productCard,.site.layout-minimal .reviewCard{border-radius:12px;box-shadow:none}
+@media(max-width:700px){.adminMain{padding:16px}.orderCard{padding:16px}.orderTable{min-width:620px}.adminProductGrid{grid-template-columns:1fr}}

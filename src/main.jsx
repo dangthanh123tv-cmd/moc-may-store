@@ -8,8 +8,6 @@ import {
 import "./styles.css";
 import { supabase } from "./supabase";
 
-const ADMIN_EMAILS = ["dangthanh123tv@gmail.com"];
-
 const PRODUCTS = [
   { id: 1, name: "Matcha Latte Mây Xanh", price: 30000, category: "Tea", rating: 4.9, desc: "Matcha thanh dịu, sữa tươi béo nhẹ và lớp mây kem mịn.", imageUrl: "https://images.unsplash.com/photo-1515823064-d6e0c04616a7?auto=format&fit=crop&w=1200&q=85" },
   { id: 2, name: "Trà Đào Cam Sả Mây", price: 30000, category: "Tea", rating: 4.9, desc: "Trà đào cam sả tươi sáng vị, cân bằng và dễ uống.", imageUrl: "https://images.unsplash.com/photo-1556679343-c7306c1976bc?auto=format&fit=crop&w=1200&q=85" },
@@ -49,7 +47,7 @@ const money = (n) => Number(n || 0).toLocaleString("vi-VN") + "đ";
 
 function App() {
   const [products, setProducts] = useState(() => read("mocProductsV2", PRODUCTS));
-  const [reviews, setReviews] = useState(() => read("mocReviewsV2", REVIEWS));
+  const [reviews, setReviews] = useState(() => read("mocReviewsV3", read("mocReviewsV2", REVIEWS)));
   const [orders, setOrders] = useState(() => read("mocOrdersV2", []));
   const [settings, setSettings] = useState(() => read("mocSettingsV2", DEFAULT_SETTINGS));
   const [cart, setCart] = useState(() => read("mocCartV2", []));
@@ -65,7 +63,7 @@ function App() {
   const [resetOpen, setResetOpen] = useState(false);
 
   const saveProducts = (v) => { setProducts(v); write("mocProductsV2", v); };
-  const saveReviews = (v) => { setReviews(v); write("mocReviewsV2", v); };
+  const saveReviews = (v) => { setReviews(v); write("mocReviewsV3", v); write("mocReviewsV2", v); };
   const saveSettings = (v) => { setSettings(v); write("mocSettingsV2", v); };
   const saveCart = (v) => { setCart(v); write("mocCartV2", v); };
 
@@ -94,12 +92,43 @@ function App() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      const email = data?.session?.user?.email?.toLowerCase();
-      if (data?.session && ADMIN_EMAILS.includes(email)) {
+      const role = data?.session?.user?.app_metadata?.role;
+      if (data?.session && role === "admin") {
         setAdmin(true);
         setPage("orders");
       }
     });
+  }, []);
+
+  useEffect(() => {
+    let channel;
+    const loadReviews = async () => {
+      const { data } = await supabase.from("reviews").select("*").order("created_at", { ascending: false });
+      if (data) {
+        const list = data.map(r => ({ id:r.id, name:r.name, rating:r.rating, text:r.text, createdAt:r.created_at }));
+        setReviews(list);
+        write("mocReviewsV3", list);
+      }
+    };
+    loadReviews();
+    channel = supabase.channel("moc-may-reviews")
+      .on("postgres_changes", {event:"INSERT", schema:"public", table:"reviews"}, payload => {
+        const r = payload.new;
+        setReviews(current => {
+          const next = [{id:r.id,name:r.name,rating:r.rating,text:r.text,createdAt:r.created_at}, ...current.filter(x => x.id !== r.id)];
+          write("mocReviewsV3", next);
+          return next;
+        });
+      })
+      .on("postgres_changes", {event:"DELETE", schema:"public", table:"reviews"}, payload => {
+        setReviews(current => {
+          const next = current.filter(x => x.id !== payload.old.id);
+          write("mocReviewsV3", next);
+          return next;
+        });
+      })
+      .subscribe();
+    return () => { if (channel) supabase.removeChannel(channel); };
   }, []);
 
   useEffect(() => {
@@ -176,9 +205,9 @@ function App() {
 
   const enterAdmin = async () => {
     const { data } = await supabase.auth.getSession();
-    const email = data?.session?.user?.email?.toLowerCase();
+    const role = data?.session?.user?.app_metadata?.role;
 
-    if (data?.session && ADMIN_EMAILS.includes(email)) {
+    if (data?.session && role === "admin") {
       setAdmin(true);
       setPage("orders");
     } else {
@@ -200,9 +229,9 @@ function App() {
       );
     }
 
-    const loggedEmail = data?.user?.email?.toLowerCase();
+    const role = data?.user?.app_metadata?.role;
 
-    if (!loggedEmail || !ADMIN_EMAILS.includes(loggedEmail)) {
+    if (role !== "admin") {
       await supabase.auth.signOut();
       throw new Error("Tài khoản này không có quyền Admin.");
     }
@@ -343,9 +372,12 @@ function App() {
     }
   };
 
-  const deleteReview = (id) => {
-    if (confirm("Xóa đánh giá này?")) {
-      saveReviews(reviews.filter((x) => x.id !== id));
+  const deleteReview = async (id) => {
+    if (!confirm("Xóa đánh giá này?")) return;
+    saveReviews(reviews.filter(x => x.id !== id));
+    if (typeof id === "number") {
+      const { error } = await supabase.from("reviews").delete().eq("id", id);
+      if (error) alert("Không xóa được đánh giá: " + error.message);
     }
   };
 
@@ -372,7 +404,7 @@ function App() {
 
   return (
     <div
-      className="site"
+      className={`site layout-${settings.layout || "soft"}`}
       style={{
         "--site-bg": settings.bg || DEFAULT_SETTINGS.bg,
         "--green": settings.green || DEFAULT_SETTINGS.green
@@ -754,24 +786,38 @@ function ReviewsPage({ reviews, saveReviews }) {
 
   const [sent, setSent] = useState(false);
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-
     if (!form.name.trim() || !form.text.trim()) return;
 
-    saveReviews([
-      {
-        id: Date.now(),
-        name: form.name.trim(),
-        rating: Number(form.rating),
-        text: form.text.trim()
-      },
-      ...reviews
-    ]);
+    const optimistic = {
+      id: `local-${Date.now()}`,
+      name: form.name.trim(),
+      rating: Number(form.rating),
+      text: form.text.trim(),
+      createdAt: new Date().toISOString()
+    };
 
+    saveReviews([optimistic, ...reviews]);
     setForm({ name: "", rating: 5, text: "" });
     setSent(true);
 
+    const { data } = await supabase.from("reviews").insert({
+      name: optimistic.name,
+      rating: optimistic.rating,
+      text: optimistic.text
+    }).select().single();
+
+    if (data) {
+      setReviews(current => {
+        const next = [
+          {id:data.id,name:data.name,rating:data.rating,text:data.text,createdAt:data.created_at},
+          ...current.filter(x => x.id !== optimistic.id && x.id !== data.id)
+        ];
+        write("mocReviewsV3", next);
+        return next;
+      });
+    }
     setTimeout(() => setSent(false), 2500);
   };
 
@@ -1075,7 +1121,7 @@ function CheckoutModal({ total, close, place }) {
 }
 
 function AdminLoginModal({ close, login, forgotPassword }) {
-  const [email, setEmail] = useState("dangthanh123tv@gmail.com");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1108,6 +1154,7 @@ function AdminLoginModal({ close, login, forgotPassword }) {
             Email
             <input
               type="email"
+              autoComplete="username"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -1140,7 +1187,7 @@ function AdminLoginModal({ close, login, forgotPassword }) {
 }
 
 function ForgotPasswordModal({ close, send }) {
-  const [email, setEmail] = useState("dangthanh123tv@gmail.com");
+  const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
@@ -1170,7 +1217,7 @@ function ForgotPasswordModal({ close, send }) {
 
         {!sent ? (
           <form onSubmit={submit}>
-            <p>Nhập email Admin để nhận link đặt mật khẩu mới.</p>
+            <p>Nhập email Admin của bạn để nhận link đặt mật khẩu mới.</p>
 
             <label>
               Email
@@ -1796,6 +1843,17 @@ function SettingsAdmin({ settings, saveSettings }) {
             value={form.green}
             onChange={(e) => update("green", e.target.value)}
           />
+        </label>
+        <label>
+          Bố cục background
+          <select
+            value={form.layout || "soft"}
+            onChange={(e) => update("layout", e.target.value)}
+          >
+            <option value="soft">Dịu nhẹ</option>
+            <option value="editorial">Editorial</option>
+            <option value="minimal">Tối giản</option>
+          </select>
         </label>
       </div>
 
