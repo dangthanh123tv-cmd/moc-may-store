@@ -23,3 +23,10 @@ Admin có:
 - Chỉnh màu nền và màu xanh chủ đạo
 
 Lưu ý: dữ liệu admin dùng localStorage nên chỉ đồng bộ trên cùng một trình duyệt/thiết bị.
+
+
+## Supabase – đơn hàng realtime
+
+Project này đã tích hợp Supabase Realtime cho bảng `orders`. Khách có thể tạo đơn mà không cần đăng nhập; Admin đăng nhập bằng Supabase Auth để xem/cập nhật đơn. Publishable key được phép dùng trong trình duyệt; không đưa secret/service_role key vào frontend.
+
+Trước khi deploy, hãy tạo một tài khoản Admin trong Supabase Authentication > Users và dùng email/mật khẩu đó ở nút Admin.
