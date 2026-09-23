@@ -69,3 +69,14 @@ Bản này giữ giao diện Mộc Mây và bổ sung:
 ### Supabase
 Mở Supabase Dashboard → SQL Editor và chạy phần SQL bổ sung ở cuối `supabase_reviews.sql`.
 Chính sách DELETE chỉ cho phép user có `app_metadata.role = admin`.
+
+## V7 — EEAT & SEO
+- Added title, meta description, robots directives, canonical and Open Graph metadata.
+- Added Schema.org CafeOrCoffeeShop structured data.
+- Added `robots.txt` and `sitemap.xml` for the GitHub Pages URL.
+- Added a trust/transparency section to the homepage.
+- Fixed the review submission state update so it no longer calls an undefined `setReviews` function.
+- Configured Vite `base` for `/moc-may-store/` GitHub Pages deployment.
+
+### Before publishing
+Replace the demo contact details (`hello@mocmay.vn`, `0900 123 456`, address) with the real business information if they are placeholders. Likewise, replace demo product photos/reviews with real assets and verified customer feedback.

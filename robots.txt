@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://dangthanh123tv-cmd.github.io/moc-may-store/sitemap.xml
