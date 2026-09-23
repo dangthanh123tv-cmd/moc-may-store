@@ -55,3 +55,17 @@ Sau khi chạy SQL, đăng xuất/đăng nhập lại Admin để nhận token m
 
 
 V6: đánh giá realtime, hiển thị tức thì, bố cục background và tối ưu mobile. Chạy `supabase_reviews.sql` trong Supabase SQL Editor trước khi dùng đánh giá realtime.
+
+
+## Nâng cấp Quản lý đơn hàng
+
+Bản này giữ giao diện Mộc Mây và bổ sung:
+- Xóa đơn hàng trực tiếp từ Admin, có xác nhận.
+- Tự tổng kết theo từng ngày: số đơn, số sản phẩm, số đơn hoàn thành và doanh thu.
+- Khi xóa đơn, thống kê tự tính lại.
+- Lọc theo ngày, trạng thái và tìm kiếm.
+- Đồng bộ xóa đơn qua Supabase Realtime.
+
+### Supabase
+Mở Supabase Dashboard → SQL Editor và chạy phần SQL bổ sung ở cuối `supabase_reviews.sql`.
+Chính sách DELETE chỉ cho phép user có `app_metadata.role = admin`.

@@ -16,3 +16,15 @@ grant select, insert on public.reviews to anon, authenticated;
 grant delete on public.reviews to authenticated;
 grant usage, select on sequence public.reviews_id_seq to anon, authenticated;
 alter publication supabase_realtime add table public.reviews;
+
+
+-- MỘC MÂY: quyền xóa đơn chỉ dành cho Admin
+alter table public.orders enable row level security;
+drop policy if exists "Admin duoc xoa don hang" on public.orders;
+create policy "Admin duoc xoa don hang"
+on public.orders for delete to authenticated
+using ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
+grant delete on public.orders to authenticated;
+
+-- Cho Supabase Realtime gửi sự kiện DELETE
+alter table public.orders replica identity full;
