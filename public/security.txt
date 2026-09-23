@@ -1,0 +1,3 @@
+Contact: https://github.com/dangthanh123tv-cmd/moc-may-store/security
+Preferred-Languages: vi, en
+Canonical: https://dangthanh123tv-cmd.github.io/moc-may-store/.well-known/security.txt

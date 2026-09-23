@@ -6,6 +6,9 @@ import {
   MapPin, Phone, Mail, Clock, LockKeyhole, KeyRound
 } from "lucide-react";
 import "./styles.css";
+import { initSentry } from "./monitoring/sentry";
+
+initSentry();
 import { supabase } from "./supabase";
 
 const PRODUCTS = [
@@ -48,7 +51,8 @@ const money = (n) => Number(n || 0).toLocaleString("vi-VN") + "đ";
 function App() {
   const [products, setProducts] = useState(() => read("mocProductsV2", PRODUCTS));
   const [reviews, setReviews] = useState(() => read("mocReviewsV3", read("mocReviewsV2", REVIEWS)));
-  const [orders, setOrders] = useState(() => read("mocOrdersV2", []));
+  const [orders, setOrders] = useState([]);
+  const [contactMessages, setContactMessages] = useState([]);
   const [settings, setSettings] = useState(() => read("mocSettingsV2", DEFAULT_SETTINGS));
   const [cart, setCart] = useState(() => read("mocCartV2", []));
   const [page, setPage] = useState("home");
@@ -62,9 +66,19 @@ function App() {
   const [forgotOpen, setForgotOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
 
-  const saveProducts = (v) => { setProducts(v); write("mocProductsV2", v); };
+  const saveProducts = async (v) => { setProducts(v); write("mocProductsV2", v); };
   const saveReviews = (v) => { setReviews(v); write("mocReviewsV3", v); write("mocReviewsV2", v); };
-  const saveSettings = (v) => { setSettings(v); write("mocSettingsV2", v); };
+  const saveSettings = async (v) => {
+    const next = { ...DEFAULT_SETTINGS, ...v };
+    const { error } = await supabase.from("store_settings").upsert({
+      id: 1, brand: next.brand, email: next.email, phone: next.phone,
+      address: next.address, hours: next.hours, bg: next.bg, green: next.green, layout: next.layout || "soft"
+    });
+    if (error) { alert("Không lưu được cài đặt: " + error.message); return false; }
+    setSettings(next);
+    write("mocSettingsV2", next);
+    return true;
+  };
   const saveCart = (v) => { setCart(v); write("mocCartV2", v); };
 
   const mapOrder = (row) => ({
@@ -94,13 +108,48 @@ function App() {
   }, []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      const role = data?.session?.user?.app_metadata?.role;
-      if (data?.session && role === "admin") {
+    let active = true;
+    supabase.auth.getUser().then(({ data, error }) => {
+      if (!active || error) return;
+      const role = data?.user?.app_metadata?.role;
+      if (role === "admin") {
         setAdmin(true);
         setPage("orders");
       }
     });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadCatalog = async () => {
+      const { data, error } = await supabase
+        .from("product_catalog")
+        .select("id,name,price,category,rating,description,image_url")
+        .eq("active", true)
+        .order("id", { ascending: true });
+      if (cancelled || error || !data?.length) return;
+      const list = data.map((p) => ({
+        id: p.id, name: p.name, price: Number(p.price), category: p.category,
+        rating: Number(p.rating), desc: p.description, imageUrl: p.image_url || ""
+      }));
+      setProducts(list);
+      write("mocProductsV2", list);
+    };
+    const loadSettings = async () => {
+      const { data, error } = await supabase
+        .from("store_settings")
+        .select("brand,email,phone,address,hours,bg,green,layout")
+        .eq("id", 1)
+        .maybeSingle();
+      if (cancelled || error || !data) return;
+      const next = { ...DEFAULT_SETTINGS, ...data };
+      setSettings(next);
+      write("mocSettingsV2", next);
+    };
+    loadCatalog();
+    loadSettings();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -155,10 +204,14 @@ function App() {
 
       const list = (data || []).map(mapOrder);
       setOrders(list);
-      write("mocOrdersV2", list);
     };
 
     loadOrders();
+    const loadContactMessages = async () => {
+      const { data } = await supabase.from("contact_messages").select("*").order("created_at", { ascending: false });
+      if (!cancelled && data) setContactMessages(data);
+    };
+    loadContactMessages();
 
     channel = supabase
       .channel("moc-may-orders")
@@ -169,7 +222,6 @@ function App() {
           const incoming = mapOrder(payload.new);
           setOrders((current) => {
             const next = [incoming, ...current.filter((x) => x.id !== incoming.id)];
-            write("mocOrdersV2", next);
             return next;
           });
 
@@ -193,7 +245,6 @@ function App() {
           const incoming = mapOrder(payload.new);
           setOrders((current) => {
             const next = current.map((x) => x.id === incoming.id ? incoming : x);
-            write("mocOrdersV2", next);
             return next;
           });
         }
@@ -204,7 +255,6 @@ function App() {
         (payload) => {
           setOrders((current) => {
             const next = current.filter((x) => x.id !== payload.old.id);
-            write("mocOrdersV2", next);
             return next;
           });
         }
@@ -217,13 +267,29 @@ function App() {
     };
   }, [admin]);
 
-  const enterAdmin = async () => {
-    const { data } = await supabase.auth.getSession();
-    const role = data?.session?.user?.app_metadata?.role;
+  const sendContactMessage = async (info) => {
+    const name = String(info.name || "").trim();
+    const email = String(info.email || "").trim();
+    const subject = String(info.subject || "").trim();
+    const message = String(info.message || "").trim();
+    if (name.length < 2 || name.length > 100) throw new Error("Tên không hợp lệ.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 160) throw new Error("Email không hợp lệ.");
+    if (subject.length < 2 || subject.length > 160) throw new Error("Chủ đề không hợp lệ.");
+    if (message.length < 5 || message.length > 2000) throw new Error("Lời nhắn phải từ 5–2000 ký tự.");
+    const { error } = await supabase.from("contact_messages").insert({ name, email, subject, message });
+    if (error) throw new Error("Chưa gửi được lời nhắn. Vui lòng thử lại sau.");
+  };
 
-    if (data?.session && role === "admin") {
+  const enterAdmin = async () => {
+    const { data, error } = await supabase.auth.getUser();
+    const role = data?.user?.app_metadata?.role;
+
+    if (!error && role === "admin") {
       setAdmin(true);
       setPage("orders");
+      if ("Notification" in window && Notification.permission === "default") {
+        try { await Notification.requestPermission(); } catch {}
+      }
     } else {
       setLoginOpen(true);
     }
@@ -253,6 +319,9 @@ function App() {
     setLoginOpen(false);
     setAdmin(true);
     setPage("orders");
+    if ("Notification" in window && Notification.permission === "default") {
+      try { await Notification.requestPermission(); } catch {}
+    }
   };
 
   const sendPasswordReset = async (email) => {
@@ -301,7 +370,6 @@ function App() {
 
     setOrders((current) => {
       const next = current.map((x) => x.id === id ? { ...x, status } : x);
-      write("mocOrdersV2", next);
       return next;
     });
   };
@@ -326,7 +394,6 @@ function App() {
 
     setOrders((current) => {
       const next = current.filter((x) => x.id !== id);
-      write("mocOrdersV2", next);
       return next;
     });
   };
@@ -362,25 +429,53 @@ function App() {
   const placeOrder = async (info) => {
     if (!cart.length) return;
 
+    const name = String(info.name || "").trim();
+    const phone = String(info.phone || "").trim();
+    const address = String(info.address || "").trim();
+    const note = String(info.note || "").trim();
+    const phoneOk = /^(?:0|\+84)[0-9 .-]{8,16}$/.test(phone);
+
+    if (name.length < 2 || name.length > 100) {
+      alert("Vui lòng nhập họ tên từ 2–100 ký tự.");
+      return;
+    }
+    if (!phoneOk) {
+      alert("Vui lòng kiểm tra số điện thoại.");
+      return;
+    }
+    if (address.length < 5 || address.length > 300) {
+      alert("Vui lòng nhập địa chỉ từ 5–300 ký tự.");
+      return;
+    }
+    if (note.length > 500) {
+      alert("Ghi chú không được vượt quá 500 ký tự.");
+      return;
+    }
+
+    const items = cart.slice(0, 30).map((x) => ({
+      id: x.id,
+      name: String(x.name).slice(0, 200),
+      price: Math.max(0, Math.round(Number(x.price) || 0)),
+      quantity: Math.min(99, Math.max(1, Math.round(Number(x.quantity) || 1)))
+    }));
+
+    const safeTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
     const payload = {
-      customer_name: info.name.trim(),
-      phone: info.phone.trim(),
-      address: info.address.trim(),
-      note: info.note?.trim() || "",
-      items: cart.map((x) => ({
-        id: x.id,
-        name: x.name,
-        price: Number(x.price),
-        quantity: Number(x.quantity)
-      })),
-      total: subtotal,
+      customer_name: name,
+      phone,
+      address,
+      note,
+      items,
+      total: safeTotal,
       status: "Mới"
     };
 
     const { error } = await supabase.from("orders").insert(payload);
 
     if (error) {
-      alert("Chưa gửi được đơn hàng: " + error.message);
+      console.error("Order insert failed", error);
+      alert("Chưa gửi được đơn hàng. Vui lòng thử lại sau.");
       return;
     }
 
@@ -390,33 +485,56 @@ function App() {
     alert("Đặt hàng thành công! Mộc Mây đã nhận đơn của bạn.");
   };
 
-  const saveProduct = (product) => {
+  const saveProduct = async (product) => {
     const value = {
       ...product,
-      price: Number(product.price),
+      name: String(product.name || "").trim(),
+      desc: String(product.desc || "").trim(),
+      category: String(product.category || "Tea").trim().slice(0, 50),
+      imageUrl: String(product.imageUrl || "").trim(),
+      price: Math.round(Number(product.price) || 0),
       rating: Number(product.rating)
     };
 
-    const next = value.id
-      ? products.map((x) => x.id === value.id ? value : x)
-      : [...products, { ...value, id: Date.now() }];
+    if (value.name.length < 2 || value.name.length > 120) { alert("Tên sản phẩm không hợp lệ."); return; }
+    if (value.price < 0 || value.price > 100000000) { alert("Giá sản phẩm không hợp lệ."); return; }
+    if (value.rating < 0 || value.rating > 5) { alert("Rating phải từ 0 đến 5."); return; }
 
-    saveProducts(next);
+    const row = {
+      ...(value.id ? { id: value.id } : {}),
+      name: value.name, price: value.price, category: value.category,
+      rating: value.rating, description: value.desc, image_url: value.imageUrl, active: true
+    };
+    const result = value.id
+      ? await supabase.from("product_catalog").upsert(row).select().single()
+      : await supabase.from("product_catalog").insert(row).select().single();
+    if (result.error || !result.data) {
+      alert("Không lưu được sản phẩm: " + (result.error?.message || "Lỗi hệ thống"));
+      return;
+    }
+    const saved = { id: result.data.id, name: result.data.name, price: Number(result.data.price), category: result.data.category, rating: Number(result.data.rating), desc: result.data.description, imageUrl: result.data.image_url || "" };
+    const next = value.id ? products.map((x) => x.id === saved.id ? saved : x) : [...products, saved];
+    await saveProducts(next);
     setEdit(null);
   };
 
-  const deleteProduct = (id) => {
-    if (confirm("Xóa sản phẩm này?")) {
-      saveProducts(products.filter((x) => x.id !== id));
-    }
+  const deleteProduct = async (id) => {
+    if (!confirm("Ẩn sản phẩm này khỏi cửa hàng? Các đơn cũ vẫn được giữ nguyên.")) return;
+    const { error } = await supabase.from("product_catalog").update({ active: false }).eq("id", id);
+    if (error) { alert("Không thể xóa sản phẩm: " + error.message); return; }
+    await saveProducts(products.filter((x) => x.id !== id));
   };
 
   const deleteReview = async (id) => {
     if (!confirm("Xóa đánh giá này?")) return;
+    const previous = reviews;
     saveReviews(reviews.filter(x => x.id !== id));
     if (typeof id === "number") {
       const { error } = await supabase.from("reviews").delete().eq("id", id);
-      if (error) alert("Không xóa được đánh giá: " + error.message);
+      if (error) {
+        saveReviews(previous);
+        alert("Không xóa được đánh giá. Vui lòng thử lại.");
+      }
     }
   };
 
@@ -437,6 +555,7 @@ function App() {
         updateOrderStatus={updateOrderStatus}
         deleteOrder={deleteOrder}
         saveSettings={saveSettings}
+        contactMessages={contactMessages}
         edit={edit}
       />
     );
@@ -522,7 +641,7 @@ function App() {
         />
       )}
 
-      {page === "contact" && <ContactPage settings={settings} />}
+      {page === "contact" && <ContactPage settings={settings} sendMessage={sendContactMessage} />}
 
       <Footer settings={settings} />
 
@@ -825,7 +944,7 @@ function Card({ p, add, open }) {
 
 function ProductImage({ p }) {
   return p.imageUrl ? (
-    <img className="pic imagePic" src={p.imageUrl} alt={p.name} />
+    <img className="pic imagePic" src={p.imageUrl} alt={p.name} loading="lazy" decoding="async" />
   ) : (
     <div className="pic">
       <ImageIcon size={30} />
@@ -861,30 +980,43 @@ function ReviewsPage({ reviews, saveReviews }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!form.name.trim() || !form.text.trim()) return;
+    const name = form.name.trim();
+    const text = form.text.trim();
+    const rating = Number(form.rating);
+    if (name.length < 2 || name.length > 80 || text.length < 5 || text.length > 1000) {
+      return;
+    }
 
     const optimistic = {
       id: `local-${Date.now()}`,
-      name: form.name.trim(),
-      rating: Number(form.rating),
-      text: form.text.trim(),
+      name,
+      rating,
+      text,
       createdAt: new Date().toISOString()
     };
 
+    const previous = reviews;
     saveReviews([optimistic, ...reviews]);
     setForm({ name: "", rating: 5, text: "" });
     setSent(true);
 
-    const { data } = await supabase.from("reviews").insert({
+    const { data, error } = await supabase.from("reviews").insert({
       name: optimistic.name,
       rating: optimistic.rating,
       text: optimistic.text
     }).select().single();
 
+    if (error) {
+      saveReviews(previous);
+      setSent(false);
+      alert("Chưa gửi được đánh giá. Vui lòng thử lại sau.");
+      return;
+    }
+
     if (data) {
       const next = [
         {id:data.id,name:data.name,rating:data.rating,text:data.text,createdAt:data.created_at},
-        ...reviews.filter(x => x.id !== optimistic.id && x.id !== data.id)
+        ...previous.filter(x => x.id !== data.id)
       ];
       saveReviews(next);
     }
@@ -954,7 +1086,7 @@ function ReviewsPage({ reviews, saveReviews }) {
   );
 }
 
-function ContactPage({ settings }) {
+function ContactPage({ settings, sendMessage }) {
   return (
     <section className="contactPage">
       <div className="contactIntro">
@@ -975,16 +1107,25 @@ function ContactPage({ settings }) {
 
       <form
         className="contactForm"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
-          alert("Đã gửi lời nhắn!");
-          e.currentTarget.reset();
+          const form = new FormData(e.currentTarget);
+          try {
+            await sendMessage({
+              name: form.get("name"), email: form.get("email"),
+              subject: form.get("subject"), message: form.get("message")
+            });
+            alert("Đã gửi lời nhắn! Mộc Mây sẽ phản hồi khi có thể.");
+            e.currentTarget.reset();
+          } catch (error) {
+            alert(error.message);
+          }
         }}
       >
-        <label>Tên của bạn<input required /></label>
-        <label>Email<input required type="email" /></label>
-        <label>Chủ đề<input required /></label>
-        <label>Lời nhắn<textarea required /></label>
+        <label>Tên của bạn<input name="name" required maxLength="100" /></label>
+        <label>Email<input name="email" required type="email" maxLength="160" /></label>
+        <label>Chủ đề<input name="subject" required maxLength="160" /></label>
+        <label>Lời nhắn<textarea name="message" required maxLength="2000" /></label>
 
         <button className="primary" type="submit">
           <Send size={17} />
@@ -1403,6 +1544,7 @@ function Admin({
   updateOrderStatus,
   deleteOrder,
   saveSettings,
+  contactMessages,
   edit
 }) {
   const tab = page === "dashboard" ? "orders" : page;
@@ -1445,6 +1587,15 @@ function Admin({
         </button>
 
         <button
+          className={tab === "contacts" ? "active" : ""}
+          onClick={() => setPage("contacts")}
+        >
+          <Mail />
+          Liên hệ
+          {contactMessages.length > 0 && <em>{contactMessages.length}</em>}
+        </button>
+
+        <button
           className={tab === "settings" ? "active" : ""}
           onClick={() => setPage("settings")}
         >
@@ -1469,6 +1620,8 @@ function Admin({
                 ? "Quản lý sản phẩm"
                 : tab === "reviews"
                 ? "Quản lý đánh giá"
+                : tab === "contacts"
+                ? "Tin nhắn liên hệ"
                 : "Cài đặt cửa hàng"}
             </h1>
           </div>
@@ -1497,6 +1650,10 @@ function Admin({
             reviews={reviews}
             deleteReview={deleteReview}
           />
+        )}
+
+        {tab === "contacts" && (
+          <ContactsAdmin messages={contactMessages} setMessages={setContactMessages} />
         )}
 
         {tab === "settings" && (
@@ -1865,6 +2022,34 @@ function ReviewsAdmin({ reviews, deleteReview }) {
   );
 }
 
+function ContactsAdmin({ messages, setMessages }) {
+  const remove = async (id) => {
+    if (!confirm("Xóa tin nhắn này?")) return;
+    const { error } = await supabase.from("contact_messages").delete().eq("id", id);
+    if (error) { alert("Không xóa được tin nhắn: " + error.message); return; }
+    setMessages((current) => current.filter((x) => x.id !== id));
+  };
+
+  if (!messages.length) return <div className="adminEmpty"><Mail size={42} /><h3>Chưa có tin nhắn</h3><p>Tin nhắn từ trang Liên hệ sẽ xuất hiện ở đây.</p></div>;
+
+  return (
+    <div className="adminReviewList">
+      {messages.map((m) => (
+        <article className="adminReviewCard" key={m.id}>
+          <div>
+            <b>{m.name}</b>
+            <small>{new Date(m.created_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</small>
+            <p><strong>{m.subject}</strong></p>
+            <p>{m.message}</p>
+            <p><a href={`mailto:${m.email}`}>{m.email}</a></p>
+          </div>
+          <button className="dangerBtn" onClick={() => remove(m.id)}><Trash2 /> Xóa</button>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function SettingsAdmin({ settings, saveSettings }) {
   const [form, setForm] = useState(settings);
   const [saved, setSaved] = useState(false);
@@ -1872,11 +2057,13 @@ function SettingsAdmin({ settings, saveSettings }) {
   const update = (key, value) =>
     setForm((old) => ({ ...old, [key]: value }));
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    saveSettings(form);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    const ok = await saveSettings(form);
+    if (ok) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    }
   };
 
   return (
