@@ -1978,21 +1978,237 @@ function ProductEditor({ product, close, save }) {
           <div className="adminFormActions">
             <button
               type="button"
+function ProductEditor({ product, close, save }) {
+  const [form, setForm] = useState(product);
+  const [uploading, setUploading] = useState(false);
+
+  const update = (key, value) =>
+    setForm((old) => ({ ...old, [key]: value }));
+
+  const uploadImage = async (file) => {
+    if (!file) return;
+
+    // Chỉ cho phép ảnh
+    if (!file.type.startsWith("image/")) {
+      alert("Vui lòng chọn file hình ảnh.");
+      return;
+    }
+
+    // Giới hạn 10MB
+    if (file.size > 10 * 1024 * 1024) {
+      alert("Ảnh không được vượt quá 10MB.");
+      return;
+    }
+
+    setUploading(true);
+
+    try {
+      const extension =
+        file.name.split(".").pop()?.toLowerCase() || "jpg";
+
+      const safeName = file.name
+        .replace(/\.[^/.]+$/, "")
+        .replace(/[^a-zA-Z0-9-_]/g, "-")
+        .slice(0, 80);
+
+      const filePath =
+        `products/${crypto.randomUUID()}-${safeName}.${extension}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("product-images")
+        .upload(filePath, file, {
+          cacheControl: "31536000",
+          upsert: false,
+          contentType: file.type
+        });
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      const { data } = supabase.storage
+        .from("product-images")
+        .getPublicUrl(filePath);
+
+      if (!data?.publicUrl) {
+        throw new Error("Không lấy được URL hình ảnh.");
+      }
+
+      update("imageUrl", data.publicUrl);
+
+    } catch (error) {
+      alert(
+        "Không tải được ảnh: " +
+        (error?.message || "Lỗi không xác định")
+      );
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="overlay">
+      <div className="modal adminEditor">
+        <button
+          className="close"
+          onClick={close}
+          type="button"
+        >
+          <X />
+        </button>
+
+        <h2>
+          {form.id ? "Sửa sản phẩm" : "Thêm sản phẩm"}
+        </h2>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+
+            if (uploading) {
+              alert("Vui lòng chờ ảnh tải lên xong.");
+              return;
+            }
+
+            save(form);
+          }}
+        >
+          <label>
+            Tên sản phẩm
+            <input
+              value={form.name}
+              onChange={(e) =>
+                update("name", e.target.value)
+              }
+              required
+            />
+          </label>
+
+          <div className="twoCols">
+            <label>
+              Giá
+              <input
+                type="number"
+                value={form.price}
+                onChange={(e) =>
+                  update("price", e.target.value)
+                }
+                required
+              />
+            </label>
+
+            <label>
+              Danh mục
+              <input
+                value={form.category}
+                onChange={(e) =>
+                  update("category", e.target.value)
+                }
+                required
+              />
+            </label>
+          </div>
+
+          <div className="twoCols">
+            <label>
+              Rating
+              <input
+                type="number"
+                min="0"
+                max="5"
+                step="0.1"
+                value={form.rating}
+                onChange={(e) =>
+                  update("rating", e.target.value)
+                }
+              />
+            </label>
+
+            <label>
+              Link hình ảnh
+              <input
+                value={form.imageUrl || ""}
+                onChange={(e) =>
+                  update("imageUrl", e.target.value)
+                }
+                placeholder="Hoặc dán URL hình ảnh"
+              />
+            </label>
+          </div>
+
+          {/* UPLOAD ẢNH */}
+          <label>
+            Hình ảnh sản phẩm
+
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              onChange={(e) =>
+                uploadImage(e.target.files?.[0])
+              }
+            />
+
+            {uploading && (
+              <div className="uploadStatus">
+                ⏳ Đang tải ảnh lên...
+              </div>
+            )}
+
+            {!uploading && form.imageUrl && (
+              <div style={{ marginTop: 12 }}>
+                <img
+                  src={form.imageUrl}
+                  alt={form.name || "Ảnh sản phẩm"}
+                  style={{
+                    width: "100%",
+                    maxHeight: 220,
+                    objectFit: "cover",
+                    borderRadius: 14,
+                    display: "block"
+                  }}
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+              </div>
+            )}
+          </label>
+
+          <label>
+            Mô tả
+            <textarea
+              value={form.desc}
+              onChange={(e) =>
+                update("desc", e.target.value)
+              }
+              required
+            />
+          </label>
+
+          <div className="adminFormActions">
+            <button
+              type="button"
               className="outlineBtn"
               onClick={close}
+              disabled={uploading}
             >
               Hủy
             </button>
 
-            <button className="primary">
-              Lưu sản phẩm
+            <button
+              className="primary"
+              disabled={uploading}
+            >
+              {uploading
+                ? "Đang tải ảnh..."
+                : "Lưu sản phẩm"}
             </button>
           </div>
         </form>
       </div>
     </div>
   );
-}
+            }
 
 function ReviewsAdmin({ reviews, deleteReview }) {
   return (
