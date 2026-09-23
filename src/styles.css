@@ -197,3 +197,46 @@ footer p{line-height:1.6;max-width:500px;color:#dce3dc}
 .site.layout-minimal .creamBand{background:#f1eee5}
 .site.layout-minimal .productCard,.site.layout-minimal .reviewCard{border-radius:12px;box-shadow:none}
 @media(max-width:700px){.adminMain{padding:16px}.orderCard{padding:16px}.orderTable{min-width:620px}.adminProductGrid{grid-template-columns:1fr}}
+
+/* Mộc Mây - quản lý đơn hàng nâng cấp */
+.ordersManager{display:grid;gap:22px}
+.orderSummary,.dailySummary{background:#fff;border:1px solid #ddd8ce;border-radius:20px;padding:20px}
+.summaryTitle,.dailyHeader,.orderTools{display:flex;justify-content:space-between;align-items:flex-end;gap:15px}
+.summaryTitle h2,.dailyHeader h2,.orderTools h2{margin:4px 0 0;font-family:Georgia,serif;font-size:26px}
+.summaryDate{background:#e7eee2;color:#315d3a;font-weight:800;padding:8px 12px;border-radius:20px}
+.summaryGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}
+.summaryCard{background:#f7f3e9;border-radius:14px;padding:16px;display:grid;gap:7px}
+.summaryCard span{color:#666;font-size:13px}.summaryCard strong{font-size:23px;color:#315d3a}
+.summaryCard.highlight{background:#e3eee0}
+.dailyTableWrap{overflow-x:auto;border:1px solid #e2dfd8;border-radius:12px;margin-top:15px}
+.dailyTable{width:100%;border-collapse:collapse;min-width:600px}
+.dailyTable th{background:#e7eee2;padding:12px;text-align:left}
+.dailyTable td{padding:12px;border-top:1px solid #e7e3db}
+.dailyTable tbody tr{cursor:pointer}.dailyTable tbody tr:hover,.dailyTable tbody tr.selected{background:#f1f5ee}
+.dailyTable td:last-child strong{color:#315d3a}
+.orderListSection{margin-top:2px}
+.orderTools{margin-bottom:12px}
+.orderToolFilters{display:flex;gap:8px;align-items:center}
+.adminSearch{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #d8d2c5;border-radius:10px;padding:10px 12px}
+.adminSearch input{border:0;outline:0;min-width:180px;background:transparent;padding:0}
+.orderToolFilters select{min-width:130px}
+.orderResultBar{display:flex;justify-content:space-between;align-items:center;color:#666;margin-bottom:12px}
+.clearFilters{border:0;background:transparent;color:#315d3a;font-weight:800;cursor:pointer}
+.orderActions{display:flex;gap:8px;align-items:center}
+.deleteOrderBtn{border:1px solid #e2b9b4;background:#fff7f6;color:#a33a32;border-radius:9px;padding:10px 12px;display:inline-flex;align-items:center;gap:6px;font-weight:700;cursor:pointer}
+.deleteOrderBtn:hover{background:#fbe7e4}
+.adminEmpty.small{padding:45px 20px}
+@media(max-width:850px){
+  .summaryGrid{grid-template-columns:repeat(2,1fr)}
+  .summaryTitle,.dailyHeader,.orderTools{align-items:flex-start;flex-direction:column}
+  .orderToolFilters{width:100%;flex-wrap:wrap}.adminSearch{flex:1}
+  .adminSearch input{min-width:0;width:100%}.orderActions{flex-wrap:wrap;justify-content:flex-end}
+}
+@media(max-width:560px){
+  .orderSummary,.dailySummary{padding:15px}.summaryGrid{gap:8px}
+  .summaryCard{padding:12px}.summaryCard strong{font-size:19px}
+  .orderTools h2{font-size:25px}.orderToolFilters{display:grid;grid-template-columns:1fr 120px}
+  .orderToolFilters select{min-width:0;width:100%}.adminSearch{width:auto}
+  .orderActions{width:100%;justify-content:stretch}.orderActions .orderStatusBox{flex:1}
+  .orderActions .orderStatusBox select{width:100%}.deleteOrderBtn{justify-content:center}
+}

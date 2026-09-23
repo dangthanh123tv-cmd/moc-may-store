@@ -69,7 +69,10 @@ function App() {
 
   const mapOrder = (row) => ({
     id: row.id,
-    createdAt: new Date(row.created_at).toLocaleString("vi-VN"),
+    createdAtISO: row.created_at,
+    createdAt: new Date(row.created_at).toLocaleString("vi-VN", {
+      timeZone: "Asia/Ho_Chi_Minh"
+    }),
     customer: row.customer_name,
     phone: row.phone,
     address: row.address,
@@ -195,6 +198,17 @@ function App() {
           });
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "orders" },
+        (payload) => {
+          setOrders((current) => {
+            const next = current.filter((x) => x.id !== payload.old.id);
+            write("mocOrdersV2", next);
+            return next;
+          });
+        }
+      )
       .subscribe();
 
     return () => {
@@ -287,6 +301,31 @@ function App() {
 
     setOrders((current) => {
       const next = current.map((x) => x.id === id ? { ...x, status } : x);
+      write("mocOrdersV2", next);
+      return next;
+    });
+  };
+
+  const deleteOrder = async (id) => {
+    const order = orders.find((x) => x.id === id);
+    const label = order ? `Đơn #${order.id}` : "đơn hàng này";
+
+    if (!window.confirm(`Bạn có chắc muốn xóa ${label}?\n\nThao tác này sẽ xóa đơn khỏi hệ thống và doanh thu theo ngày sẽ được tính lại.`)) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from("orders")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      alert("Không xóa được đơn: " + error.message);
+      return;
+    }
+
+    setOrders((current) => {
+      const next = current.filter((x) => x.id !== id);
       write("mocOrdersV2", next);
       return next;
     });
@@ -396,6 +435,7 @@ function App() {
         saveProduct={saveProduct}
         deleteReview={deleteReview}
         updateOrderStatus={updateOrderStatus}
+        deleteOrder={deleteOrder}
         saveSettings={saveSettings}
         edit={edit}
       />
@@ -1330,6 +1370,7 @@ function Admin({
   saveProduct,
   deleteReview,
   updateOrderStatus,
+  deleteOrder,
   saveSettings,
   edit
 }) {
@@ -1406,6 +1447,7 @@ function Admin({
           <OrdersAdmin
             orders={orders}
             updateOrderStatus={updateOrderStatus}
+            deleteOrder={deleteOrder}
           />
         )}
 
@@ -1441,133 +1483,159 @@ function Admin({
    ĐƠN HÀNG ADMIN
 ========================= */
 
-function OrdersAdmin({ orders, updateOrderStatus }) {
-  const statuses = [
-    "Mới",
-    "Đã nhận",
-    "Đang pha",
-    "Đang giao",
-    "Hoàn thành"
-  ];
+function OrdersAdmin({ orders, updateOrderStatus, deleteOrder }) {
+  const statuses = ["Mới", "Đã nhận", "Đang pha", "Đang giao", "Hoàn thành"];
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("Tất cả");
+  const [dayFilter, setDayFilter] = useState("Tất cả");
+
+  const getDay = (order) => {
+    const source = order.createdAtISO || order.createdAt;
+    const date = new Date(source);
+    if (Number.isNaN(date.getTime())) return "Không xác định";
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(date);
+  };
+
+  const formatDay = (day) => {
+    if (day === "Không xác định") return day;
+    const [y, m, d] = day.split("-");
+    return `${d}/${m}/${y}`;
+  };
+
+  const dayTotals = useMemo(() => {
+    const map = new Map();
+    orders.forEach((order) => {
+      const day = getDay(order);
+      if (!map.has(day)) map.set(day, { day, orders: 0, products: 0, completed: 0, revenue: 0 });
+      const row = map.get(day);
+      row.orders += 1;
+      row.completed += order.status === "Hoàn thành" ? 1 : 0;
+      row.revenue += Number(order.total || 0);
+      row.products += (order.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    });
+    return [...map.values()].sort((a, b) => b.day.localeCompare(a.day));
+  }, [orders]);
+
+  const filteredOrders = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    return orders.filter((order) => {
+      const matchesStatus = statusFilter === "Tất cả" || order.status === statusFilter;
+      const matchesDay = dayFilter === "Tất cả" || getDay(order) === dayFilter;
+      const haystack = [
+        order.id, order.customer, order.phone, order.address, order.note,
+        ...(order.items || []).map((item) => item.name)
+      ].join(" ").toLowerCase();
+      return matchesStatus && matchesDay && (!keyword || haystack.includes(keyword));
+    });
+  }, [orders, search, statusFilter, dayFilter]);
+
+  const visibleTotal = filteredOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
+  const todaySummary = dayTotals.find((x) => x.day === today) || { orders: 0, products: 0, completed: 0, revenue: 0 };
 
   if (!orders.length) {
-    return (
-      <div className="adminEmpty">
-        <Package size={44} />
-        <h3>Chưa có đơn hàng</h3>
-        <p>Khi khách đặt hàng, đơn mới sẽ xuất hiện ở đây.</p>
-      </div>
-    );
+    return <div className="adminEmpty"><Package size={44} /><h3>Chưa có đơn hàng</h3><p>Khi khách đặt hàng, đơn mới sẽ xuất hiện ở đây.</p></div>;
   }
 
   return (
-    <div className="adminOrders">
-      {orders.map((order) => (
-        <article className="orderCard" key={order.id}>
-          <div className="orderHead">
-            <div>
-              <b>Đơn #{order.id}</b>
-              <small>{order.createdAt}</small>
-            </div>
+    <div className="ordersManager">
+      <section className="orderSummary">
+        <div className="summaryTitle">
+          <div><span className="sectionTag">TỔNG KẾT HÔM NAY</span><h2>Doanh thu trong ngày</h2></div>
+          <span className="summaryDate">{formatDay(today)}</span>
+        </div>
+        <div className="summaryGrid">
+          <div className="summaryCard"><span>Đơn hàng</span><strong>{todaySummary.orders}</strong></div>
+          <div className="summaryCard"><span>Sản phẩm</span><strong>{todaySummary.products}</strong></div>
+          <div className="summaryCard"><span>Hoàn thành</span><strong>{todaySummary.completed}</strong></div>
+          <div className="summaryCard highlight"><span>Doanh thu</span><strong>{money(todaySummary.revenue)}</strong></div>
+        </div>
+      </section>
 
-            <div className="orderStatusBox">
-              <select
-                value={order.status}
-                onChange={(e) =>
-                  updateOrderStatus(order.id, e.target.value)
-                }
-              >
-                {statuses.map((status) => (
-                  <option key={status} value={status}>
-                    {status}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="orderCustomer">
-            <div>
-              <span>👤</span>
-              <span>
-                <b>Tên:</b> {order.customer || "Không có"}
-              </span>
-            </div>
-
-            <div>
-              <span>☎</span>
-              <span>
-                <b>SĐT:</b> {order.phone || "Không có"}
-              </span>
-            </div>
-
-            <div>
-              <span>📍</span>
-              <span>
-                <b>Địa chỉ:</b> {order.address || "Không có"}
-              </span>
-            </div>
-
-            {order.note && (
-              <div>
-                <span>📝</span>
-                <span>
-                  <b>Ghi chú:</b> {order.note}
-                </span>
-              </div>
-            )}
-          </div>
-
-          <h3 className="orderProductTitle">
-            Chi tiết sản phẩm
-          </h3>
-
-          <div className="orderTableWrap">
-            <table className="orderTable">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Sản phẩm</th>
-                  <th>Số lượng</th>
-                  <th>Đơn giá</th>
-                  <th>Thành tiền</th>
+      <section className="dailySummary">
+        <div className="dailyHeader">
+          <div><span className="sectionTag">THỐNG KÊ</span><h2>Tổng kết theo ngày</h2></div>
+          <button className={dayFilter === "Tất cả" ? "filter active" : "filter"} onClick={() => setDayFilter("Tất cả")}>Tất cả ngày</button>
+        </div>
+        <div className="dailyTableWrap">
+          <table className="dailyTable">
+            <thead><tr><th>Ngày</th><th>Đơn</th><th>Sản phẩm</th><th>Hoàn thành</th><th>Doanh thu</th></tr></thead>
+            <tbody>
+              {dayTotals.map((row) => (
+                <tr key={row.day} className={dayFilter === row.day ? "selected" : ""} onClick={() => setDayFilter(row.day)}>
+                  <td><b>{formatDay(row.day)}</b></td><td>{row.orders}</td><td>{row.products}</td><td>{row.completed}</td><td><strong>{money(row.revenue)}</strong></td>
                 </tr>
-              </thead>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-              <tbody>
-                {(order.items || []).map((item, index) => {
-                  const quantity = Number(item.quantity || 1);
-                  const price = Number(item.price || 0);
-                  const itemTotal = quantity * price;
-
-                  return (
-                    <tr key={index}>
-                      <td>{index + 1}</td>
-                      <td className="orderProductName">{item.name}</td>
-                      <td className="orderQuantity">
-                        {quantity}
-                      </td>
-                      <td>{money(price)}</td>
-                      <td className="orderItemTotal">
-                        {money(itemTotal)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+      <section className="orderListSection">
+        <div className="orderTools">
+          <div><span className="sectionTag">ĐƠN HÀNG</span><h2>{dayFilter === "Tất cả" ? "Tất cả đơn hàng" : `Đơn ngày ${formatDay(dayFilter)}`}</h2></div>
+          <div className="orderToolFilters">
+            <div className="adminSearch"><Search size={18} /><input placeholder="Tìm đơn, tên, SĐT..." value={search} onChange={(e) => setSearch(e.target.value)} /></div>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option>Tất cả</option>{statuses.map((status) => <option key={status}>{status}</option>)}
+            </select>
           </div>
+        </div>
 
-          <div className="orderTotal">
-            <span>Tổng cộng:</span>
-            <strong>{money(order.total)}</strong>
+        <div className="orderResultBar">
+          <span>{filteredOrders.length} đơn · Tổng {money(visibleTotal)}</span>
+          {(search || statusFilter !== "Tất cả" || dayFilter !== "Tất cả") && (
+            <button className="clearFilters" onClick={() => { setSearch(""); setStatusFilter("Tất cả"); setDayFilter("Tất cả"); }}>Xóa bộ lọc</button>
+          )}
+        </div>
+
+        {!filteredOrders.length ? (
+          <div className="adminEmpty small"><Search size={36} /><h3>Không tìm thấy đơn</h3><p>Thử thay đổi từ khóa hoặc bộ lọc.</p></div>
+        ) : (
+          <div className="adminOrders">
+            {filteredOrders.map((order) => (
+              <article className="orderCard" key={order.id}>
+                <div className="orderHead">
+                  <div><b>Đơn #{order.id}</b><small>{order.createdAt}</small></div>
+                  <div className="orderActions">
+                    <div className="orderStatusBox">
+                      <select value={order.status} onChange={(e) => updateOrderStatus(order.id, e.target.value)}>
+                        {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                      </select>
+                    </div>
+                    <button className="deleteOrderBtn" onClick={() => deleteOrder(order.id)} title="Xóa đơn hàng"><Trash2 size={17} /> Xóa đơn</button>
+                  </div>
+                </div>
+
+                <div className="orderCustomer">
+                  <div><span>👤</span><span><b>Tên:</b> {order.customer || "Không có"}</span></div>
+                  <div><span>☎</span><span><b>SĐT:</b> {order.phone || "Không có"}</span></div>
+                  <div><span>📍</span><span><b>Địa chỉ:</b> {order.address || "Không có"}</span></div>
+                  {order.note && <div><span>📝</span><span><b>Ghi chú:</b> {order.note}</span></div>}
+                </div>
+
+                <h3 className="orderProductTitle">Chi tiết sản phẩm</h3>
+                <div className="orderTableWrap">
+                  <table className="orderTable">
+                    <thead><tr><th>#</th><th>Sản phẩm</th><th>Số lượng</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
+                    <tbody>
+                      {(order.items || []).map((item, index) => {
+                        const quantity = Number(item.quantity || 1);
+                        const price = Number(item.price || 0);
+                        return <tr key={index}><td>{index + 1}</td><td className="orderProductName">{item.name}</td><td className="orderQuantity">{quantity}</td><td>{money(price)}</td><td className="orderItemTotal">{money(quantity * price)}</td></tr>;
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="orderTotal"><span>Tổng cộng:</span><strong>{money(order.total)}</strong></div>
+              </article>
+            ))}
           </div>
-        </article>
-      ))}
+        )}
+      </section>
     </div>
   );
 }
-
 function ProductsAdmin({
   products,
   setEdit,
