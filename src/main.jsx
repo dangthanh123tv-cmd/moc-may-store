@@ -651,6 +651,39 @@ function Home({ products, reviews, setPage, add, open }) {
         </div>
       </section>
 
+      <section className="section trustSection" aria-labelledby="trust-title">
+        <div className="sectionTag">MINH BẠCH & TIN CẬY</div>
+        <h2 id="trust-title">Điều Mộc Mây luôn rõ ràng với bạn</h2>
+        <div className="grid trustGrid">
+          <article className="trustCard">
+            <div className="trustIcon">01</div>
+            <h3>Thông tin sản phẩm</h3>
+            <p>Mỗi món có tên, danh mục, giá, mô tả và hình ảnh để bạn dễ xem trước khi đặt.</p>
+          </article>
+          <article className="trustCard">
+            <div className="trustIcon">02</div>
+            <h3>Đánh giá cộng đồng</h3>
+            <p>Bạn có thể gửi đánh giá trực tiếp trên website. Đánh giá được lưu và hiển thị từ hệ thống của Mộc Mây.</p>
+          </article>
+          <article className="trustCard">
+            <div className="trustIcon">03</div>
+            <h3>Đặt hàng minh bạch</h3>
+            <p>Giỏ hàng hiển thị số lượng và tạm tính trước khi bạn gửi thông tin đặt hàng.</p>
+          </article>
+          <article className="trustCard">
+            <div className="trustIcon">04</div>
+            <h3>Liên hệ trực tiếp</h3>
+            <p>Thông tin email, điện thoại, địa chỉ và giờ mở cửa được công khai để bạn dễ kết nối.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="section aboutSection" aria-labelledby="about-title">
+        <div className="sectionTag">VỀ MỘC MÂY</div>
+        <h2 id="about-title">Một thương hiệu nhỏ, đặt sự dịu dàng vào từng ly</h2>
+        <p className="lead">Mộc Mây tập trung vào những thức uống dễ uống, hình ảnh nhẹ nhàng và trải nghiệm đặt hàng rõ ràng. Nội dung trên website được xây dựng để bạn có thể xem thông tin món, tham khảo đánh giá và liên hệ với Mộc Mây trước khi mua.</p>
+      </section>
+
       <section className="quoteSection">
         <div>
           <div className="sectionTag light">MỘC MÂY</div>
@@ -849,14 +882,11 @@ function ReviewsPage({ reviews, saveReviews }) {
     }).select().single();
 
     if (data) {
-      setReviews(current => {
-        const next = [
-          {id:data.id,name:data.name,rating:data.rating,text:data.text,createdAt:data.created_at},
-          ...current.filter(x => x.id !== optimistic.id && x.id !== data.id)
-        ];
-        write("mocReviewsV3", next);
-        return next;
-      });
+      const next = [
+        {id:data.id,name:data.name,rating:data.rating,text:data.text,createdAt:data.created_at},
+        ...reviews.filter(x => x.id !== optimistic.id && x.id !== data.id)
+      ];
+      saveReviews(next);
     }
     setTimeout(() => setSent(false), 2500);
   };
@@ -992,6 +1022,7 @@ function Footer({ settings }) {
         <span>Sản phẩm</span>
         <span>Đánh giá</span>
         <span>Liên hệ</span>
+        <span>Đặt hàng: kiểm tra thông tin trước khi xác nhận</span>
       </div>
 
       <div className="copyright">
