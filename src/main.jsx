@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ShoppingCart, Package, MessageSquare, Settings, Plus, Pencil, Trash2,
@@ -47,6 +47,47 @@ const read = (key, fallback) => {
 
 const write = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 const money = (n) => Number(n || 0).toLocaleString("vi-VN") + "đ";
+
+const PRODUCT_IMAGE_BUCKET = "product-images";
+
+const normalizeProductPrice = (value) => {
+  const price = Number(value || 0);
+  if (price >= 1000000 && price <= 100000000) return Math.round(price / 1000);
+  return Math.round(price);
+};
+
+const placeholderImage = (name = "Mộc Mây") => {
+  const safe = String(name).slice(0, 28).replace(/[<>&"]/g, "");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="700" viewBox="0 0 900 700"><rect width="900" height="700" fill="#ebe8dc"/><circle cx="450" cy="300" r="82" fill="#315d3a"/><text x="450" y="325" text-anchor="middle" font-size="92" font-family="Georgia,serif" fill="#fff">M</text><text x="450" y="470" text-anchor="middle" font-size="38" font-family="Arial,sans-serif" fill="#315d3a">${safe}</text><text x="450" y="520" text-anchor="middle" font-size="24" font-family="Arial,sans-serif" fill="#6d756b">Ảnh sản phẩm Mộc Mây</text></svg>`;
+  return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+};
+
+const compressProductImage = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => {
+        const maxSide = 1600;
+        const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return reject(new Error("Trình duyệt không hỗ trợ xử lý ảnh."));
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(
+          (blob) => blob ? resolve(blob) : reject(new Error("Không thể nén ảnh.")),
+          "image/jpeg",
+          0.82
+        );
+      };
+      image.onerror = () => reject(new Error("Không đọc được ảnh."));
+      image.src = String(reader.result);
+    };
+    reader.onerror = () => reject(new Error("Không đọc được tệp ảnh."));
+    reader.readAsDataURL(file);
+  });
 
 function App() {
   const [products, setProducts] = useState(() => read("mocProductsV2", PRODUCTS));
@@ -130,7 +171,7 @@ function App() {
         .order("id", { ascending: true });
       if (cancelled || error || !data?.length) return;
       const list = data.map((p) => ({
-        id: p.id, name: p.name, price: Number(p.price), category: p.category,
+        id: p.id, name: p.name, price: normalizeProductPrice(p.price), category: p.category,
         rating: Number(p.rating), desc: p.description, imageUrl: p.image_url || ""
       }));
       setProducts(list);
@@ -943,12 +984,22 @@ function Card({ p, add, open }) {
 }
 
 function ProductImage({ p }) {
-  return p.imageUrl ? (
-    <img className="pic imagePic" src={p.imageUrl} alt={p.name} loading="lazy" decoding="async" />
-  ) : (
-    <div className="pic">
-      <ImageIcon size={30} />
-    </div>
+  const fallback = placeholderImage(p.name);
+  const [src, setSrc] = useState(p.imageUrl || fallback);
+
+  useEffect(() => {
+    setSrc(p.imageUrl || fallback);
+  }, [p.imageUrl, p.name]);
+
+  return (
+    <img
+      className="pic imagePic"
+      src={src}
+      alt={p.name}
+      loading="lazy"
+      decoding="async"
+      onError={() => setSrc(fallback)}
+    />
   );
 }
 
@@ -1896,51 +1947,131 @@ function ProductsAdmin({
 }
 
 function ProductEditor({ product, close, save }) {
-  const [form, setForm] = useState(product);
+  const [form, setForm] = useState({
+    ...product,
+    price: normalizeProductPrice(product.price)
+  });
+  const [uploading, setUploading] = useState(false);
+  const [preview, setPreview] = useState(product.imageUrl || "");
+  const inputRef = useRef(null);
+  const previewObjectUrl = useRef("");
 
   const update = (key, value) =>
     setForm((old) => ({ ...old, [key]: value }));
+
+  const chooseImage = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Vui lòng chọn tệp ảnh.");
+      return;
+    }
+    if (file.size > 12 * 1024 * 1024) {
+      alert("Ảnh gốc tối đa 12 MB.");
+      return;
+    }
+
+    const localUrl = URL.createObjectURL(file);
+    if (previewObjectUrl.current) URL.revokeObjectURL(previewObjectUrl.current);
+    previewObjectUrl.current = localUrl;
+    setPreview(localUrl);
+    setUploading(true);
+
+    try {
+      const compressed = await compressProductImage(file);
+      const safeName = String(form.name || "san-pham")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .toLowerCase()
+        .slice(0, 50) || "san-pham";
+      const path = `products/${Date.now()}-${safeName}.jpg`;
+
+      const { data, error } = await supabase.storage
+        .from(PRODUCT_IMAGE_BUCKET)
+        .upload(path, compressed, {
+          contentType: "image/jpeg",
+          cacheControl: "31536000",
+          upsert: false
+        });
+
+      if (error) {
+        console.error("Product image upload failed", error);
+        throw new Error(
+          error.message?.toLowerCase().includes("bucket")
+            ? "Chưa có bucket product-images. Hãy tạo bucket và policy trong Supabase."
+            : error.message
+        );
+      }
+
+      const { data: publicData } = supabase.storage
+        .from(PRODUCT_IMAGE_BUCKET)
+        .getPublicUrl(data.path);
+
+      if (!publicData?.publicUrl) {
+        throw new Error("Không lấy được URL ảnh sau khi tải lên.");
+      }
+
+      update("imageUrl", publicData.publicUrl);
+      setPreview(publicData.publicUrl);
+    } catch (error) {
+      console.error(error);
+      alert("Không tải được ảnh: " + (error?.message || "Lỗi không xác định"));
+      setPreview(form.imageUrl || "");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removeImage = () => {
+    update("imageUrl", "");
+    setPreview("");
+  };
+
+  useEffect(() => {
+    return () => {
+      if (previewObjectUrl.current) URL.revokeObjectURL(previewObjectUrl.current);
+    };
+  }, []);
 
   return (
     <div className="overlay">
       <div className="modal adminEditor">
         <button className="close" onClick={close}><X /></button>
-
         <h2>{form.id ? "Sửa sản phẩm" : "Thêm sản phẩm"}</h2>
 
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            save(form);
+            if (uploading) return;
+            save({ ...form, price: normalizeProductPrice(form.price) });
           }}
         >
           <label>
             Tên sản phẩm
-            <input
-              value={form.name}
-              onChange={(e) => update("name", e.target.value)}
-              required
-            />
+            <input value={form.name} onChange={(e) => update("name", e.target.value)} required />
           </label>
 
           <div className="twoCols">
             <label>
-              Giá
+              Giá (VNĐ)
               <input
                 type="number"
+                min="0"
+                step="1000"
                 value={form.price}
                 onChange={(e) => update("price", e.target.value)}
                 required
               />
+              <small style={{display:"block",marginTop:6,opacity:.7}}>Ví dụ: 35000 → 35.000đ</small>
             </label>
 
             <label>
               Danh mục
-              <input
-                value={form.category}
-                onChange={(e) => update("category", e.target.value)}
-                required
-              />
+              <input value={form.category} onChange={(e) => update("category", e.target.value)} required />
             </label>
           </div>
 
@@ -1958,34 +2089,55 @@ function ProductEditor({ product, close, save }) {
             </label>
 
             <label>
-              Link hình ảnh
-              <input
-                value={form.imageUrl}
-                onChange={(e) => update("imageUrl", e.target.value)}
-              />
+              Hình ảnh sản phẩm
+              <div style={{marginTop:8,border:"1px dashed rgba(49,93,58,.45)",borderRadius:16,padding:12}}>
+                <div style={{background:"#ebe8dc",borderRadius:12,overflow:"hidden",aspectRatio:"4/3",display:"grid",placeItems:"center"}}>
+                  <img
+                    src={preview || placeholderImage(form.name)}
+                    alt="Xem trước sản phẩm"
+                    style={{width:"100%",height:"100%",objectFit:"cover"}}
+                    onError={(e) => { e.currentTarget.src = placeholderImage(form.name); }}
+                  />
+                </div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
+                  <button
+                    type="button"
+                    className="outlineBtn"
+                    onClick={() => inputRef.current?.click()}
+                    disabled={uploading}
+                  >
+                    <ImageIcon size={17} />
+                    {uploading ? "Đang tải ảnh..." : "Chọn ảnh từ máy"}
+                  </button>
+                  {preview && !uploading && (
+                    <button type="button" className="outlineBtn" onClick={removeImage}>
+                      Xóa ảnh
+                    </button>
+                  )}
+                </div>
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={chooseImage}
+                  style={{display:"none"}}
+                />
+                <small style={{display:"block",marginTop:8,opacity:.7}}>
+                  Điện thoại: chọn từ Thư viện/Ảnh. Máy tính: chọn tệp. Ảnh sẽ tự nén và tải lên Supabase.
+                </small>
+              </div>
             </label>
           </div>
 
           <label>
             Mô tả
-            <textarea
-              value={form.desc}
-              onChange={(e) => update("desc", e.target.value)}
-              required
-            />
+            <textarea value={form.desc} onChange={(e) => update("desc", e.target.value)} required />
           </label>
 
           <div className="adminFormActions">
-            <button
-              type="button"
-              className="outlineBtn"
-              onClick={close}
-            >
-              Hủy
-            </button>
-
-            <button className="primary">
-              Lưu sản phẩm
+            <button type="button" className="outlineBtn" onClick={close}>Hủy</button>
+            <button className="primary" disabled={uploading}>
+              {uploading ? "Đang tải ảnh..." : "Lưu sản phẩm"}
             </button>
           </div>
         </form>
@@ -1993,7 +2145,6 @@ function ProductEditor({ product, close, save }) {
     </div>
   );
 }
-
 function ReviewsAdmin({ reviews, deleteReview }) {
   return (
     <div className="adminReviewList">
